@@ -1,3 +1,4 @@
+<img width="1024" height="1024" alt="reference-app-icon-1024" src="https://github.com/user-attachments/assets/2548d9f6-e61f-432f-b710-1a1935b1ebcf" />
 # Command Forge
 
 **Download:** Windows x64 builds are on the [Releases](https://github.com/MrHakan/command-forge/releases) page. Unzip and start `CommandForge.exe`; no .NET installation is needed. Requires Prism Launcher with a Minecraft account; live editing requires Java Edition 26.2.
