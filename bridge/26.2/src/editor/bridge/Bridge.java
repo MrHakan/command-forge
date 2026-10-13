@@ -37,6 +37,7 @@ public final class Bridge {
     private static final List<BlockPos> positions = new ArrayList<>();
     private static final List<CommandBlockEntity> identities = new ArrayList<>();
     private static ServerLevel ownedLevel;
+    private static JsonArray validation = new JsonArray();
     // Rules requested by the client for a world it is about to create; applied once to that world only.
     private static volatile String setupLevel;
     private static volatile boolean[] setupRules;
@@ -157,6 +158,22 @@ public final class Bridge {
             if (feedback.failed) throw new IllegalArgumentException(feedback.text.toString());
             message = "Main-hand item updated. " + feedback.text; return;
         }
+        if (operation.equals("validate")) {
+            // Parse every command without placing anything, so the editor can mark all invalid blocks at once.
+            JsonArray nodes = data.getAsJsonArray("nodes");
+            if (nodes.isEmpty() || nodes.size() > 128) throw new IllegalArgumentException("Use 1–128 blocks");
+            BlockPos anchor = new BlockPos(data.get("x").getAsInt(), data.get("y").getAsInt(), data.get("z").getAsInt());
+            JsonArray results = new JsonArray(); int invalid = 0;
+            for (int i = 0; i < nodes.size(); i++) {
+                JsonObject result = new JsonObject(); result.addProperty("index", i);
+                try { validate(server, source.withPosition(net.minecraft.world.phys.Vec3.atCenterOf(anchor.offset(0, 0, i))), nodes.get(i).getAsJsonObject().get("command").getAsString()); result.addProperty("ok", true); }
+                catch (Exception e) { invalid++; result.addProperty("ok", false); result.addProperty("message", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()); }
+                results.add(result);
+            }
+            validation = results;
+            message = invalid == 0 ? "All " + nodes.size() + " commands parse in " + server.getServerVersion() + "." : invalid + " of " + nodes.size() + " commands do not parse in " + server.getServerVersion() + ".";
+            return;
+        }
         if (!operation.equals("install")) throw new IllegalArgumentException("Unknown operation");
         JsonArray nodes = data.getAsJsonArray("nodes");
         String timeline = data.has("timelineObjective") ? data.get("timelineObjective").getAsString() : "";
@@ -178,7 +195,8 @@ public final class Bridge {
                 throw new IllegalArgumentException("Block " + (i+1) + ": position is outside the loaded/buildable region");
             if (!positions.contains(pos) && !level.getBlockState(pos).isAir())
                 throw new IllegalArgumentException("Block " + (i+1) + ": allocate in air; existing blocks are preserved");
-            validate(server, source.withPosition(net.minecraft.world.phys.Vec3.atCenterOf(pos)), node.get("command").getAsString());
+            try { validate(server, source.withPosition(net.minecraft.world.phys.Vec3.atCenterOf(pos)), node.get("command").getAsString()); }
+            catch (Exception e) { throw new IllegalArgumentException("Block " + (i+1) + ": " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())); }
             proposed.add(pos);
         }
         // All syntax, occupancy and ownership checks precede mutation. Deactivate before replacing.
@@ -241,6 +259,7 @@ public final class Bridge {
             var itemJson = ItemStack.CODEC.encodeStart(server.registryAccess().createSerializationContext(JsonOps.INSTANCE), item);
             itemJson.result().ifPresent(value -> player.add("itemJson", value));
         }
+        state.add("validation", validation);
         state.add("players", players); JsonArray blocks = new JsonArray();
         for (int i = 0; i < positions.size(); i++) {
             var pos = positions.get(i); var e = ownedLevel.getBlockEntity(pos);

@@ -74,3 +74,36 @@ internal static class Scenario
     }
     public static string Export(List<ScenarioNode> nodes) => JsonSerializer.Serialize(new { format = "universal-editor-scenario-1", target = "26.2", nodes }, new JsonSerializerOptions { WriteIndented = true });
 }
+
+// Rewrites particle arguments from the pre-1.20.5 positional syntax to the component syntax used by 26.2.
+// Only exact, well-known patterns are changed; anything else is left for the game parser to report.
+internal static class LegacySyntax
+{
+    private const string Id = @"(?:[a-z0-9_.-]+:)?[a-z0-9_./-]+";
+    private const string Number = @"-?(?:\d+\.?\d*|\.\d+)";
+    private static readonly Regex BlockParticle = new(@"(?<=\bparticle\s+)(?:minecraft:)?(?<type>block|block_marker|falling_dust|dust_pillar|block_crumble)\s+(?<block>" + Id + @")(?:\[(?<props>[^\]]*)\])?(?=\s|$)", RegexOptions.CultureInvariant);
+    private static readonly Regex ItemParticle = new(@"(?<=\bparticle\s+)(?:minecraft:)?item\s+(?<item>" + Id + @")(?=\s|$)", RegexOptions.CultureInvariant);
+    private static readonly Regex DustTransition = new(@"(?<=\bparticle\s+)(?:minecraft:)?dust_color_transition\s+(?<r>" + Number + @")\s+(?<g>" + Number + @")\s+(?<b>" + Number + @")\s+(?<s>" + Number + @")\s+(?<r2>" + Number + @")\s+(?<g2>" + Number + @")\s+(?<b2>" + Number + @")(?=\s|$)", RegexOptions.CultureInvariant);
+    private static readonly Regex Dust = new(@"(?<=\bparticle\s+)(?:minecraft:)?dust\s+(?<r>" + Number + @")\s+(?<g>" + Number + @")\s+(?<b>" + Number + @")\s+(?<s>" + Number + @")(?=\s|$)", RegexOptions.CultureInvariant);
+    private static string Full(string id) => id.Contains(':') ? id : "minecraft:" + id;
+    public static string Upgrade(string command)
+    {
+        command = BlockParticle.Replace(command, m =>
+        {
+            string block = Full(m.Groups["block"].Value);
+            if (!m.Groups["props"].Success || m.Groups["props"].Value.Trim().Length == 0) return $"minecraft:{m.Groups["type"].Value}{{block_state:\"{block}\"}}";
+            var properties = new List<string>();
+            foreach (var pair in m.Groups["props"].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var parts = pair.Split('=', 2, StringSplitOptions.TrimEntries);
+                if (parts.Length != 2 || !Regex.IsMatch(parts[0], @"\A[a-z0-9_]+\z") || !Regex.IsMatch(parts[1], @"\A[a-z0-9_]+\z")) return m.Value;
+                properties.Add($"{parts[0]}:\"{parts[1]}\"");
+            }
+            return $"minecraft:{m.Groups["type"].Value}{{block_state:{{Name:\"{block}\",Properties:{{{string.Join(',', properties)}}}}}}}";
+        });
+        command = ItemParticle.Replace(command, m => $"minecraft:item{{item:{{id:\"{Full(m.Groups["item"].Value)}\"}}}}");
+        command = DustTransition.Replace(command, m => $"minecraft:dust_color_transition{{from_color:[{m.Groups["r"].Value},{m.Groups["g"].Value},{m.Groups["b"].Value}],scale:{m.Groups["s"].Value},to_color:[{m.Groups["r2"].Value},{m.Groups["g2"].Value},{m.Groups["b2"].Value}]}}");
+        command = Dust.Replace(command, m => $"minecraft:dust{{color:[{m.Groups["r"].Value},{m.Groups["g"].Value},{m.Groups["b"].Value}],scale:{m.Groups["s"].Value}}}");
+        return command;
+    }
+}

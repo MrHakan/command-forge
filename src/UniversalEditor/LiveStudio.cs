@@ -32,6 +32,7 @@ internal sealed class LiveStudio : UserControl
     private readonly NumericUpDown x = Coordinate(), y = Coordinate(), z = Coordinate();
     private readonly CheckBox live = new() { Text = "Live sync", AutoSize = true, Font = Ui.Strong, Margin = new Padding(Ui.S(8), Ui.S(7), Ui.S(8), 0) };
     private readonly Button stage, run, stop, readBlocks, near;
+    private Button checkBlocks = null!, deleteBlock = null!;
     private readonly TextBox review = Ui.TextInput("", true, true);
     private readonly TextBox setupCommand = Ui.TextInput("scoreboard objectives add demo dummy", true, true);
     private readonly Button executeSetup;
@@ -39,7 +40,8 @@ internal sealed class LiveStudio : UserControl
     private bool selecting, dirty, running, draftDirty;
     private DateTime changedAt, draftChangedAt;
     private string lastAck = "", session = "", expectedCommands = "", lastStatus = "";
-    private bool awaitingInstall, anchorPending;
+    private bool awaitingInstall, anchorPending, awaitingValidation;
+    private readonly Dictionary<int, string> nodeErrors = [];
     private readonly bool persist;
     public StudioPage Page { get; private set; } = StudioPage.Scenario;
     public MinecraftAssets Assets => catalog.Assets;
@@ -140,19 +142,24 @@ internal sealed class LiveStudio : UserControl
             Ui.Button("+ Block", Tone.Primary, "Add a chain block after the selected one", () => Guard(() => { if (nodes.Count >= 128) throw new IOException("A chain can have at most 128 blocks."); int at = Math.Max(0, steps.SelectedIndex) + 1; nodes.Insert(Math.Min(at, nodes.Count), new ScenarioNode { Name = "Chain block" }); steps.SelectedIndex = Math.Min(at, nodes.Count - 1); Changed(); MarkUnsaved(); })),
             Ui.Button("Duplicate", Tone.Secondary, null, () => Guard(() => { if (steps.SelectedItem is not ScenarioNode n) return; if (nodes.Count >= 128) throw new IOException("A chain can have at most 128 blocks."); nodes.Insert(steps.SelectedIndex + 1, new ScenarioNode { Name = n.Name, Command = n.Command, Conditional = n.Conditional, Explanation = n.Explanation }); steps.SelectedIndex++; Changed(); MarkUnsaved(); })),
             Ui.Button("↑", Tone.Ghost, "Move up", () => MoveStep(-1)), Ui.Button("↓", Tone.Ghost, "Move down", () => MoveStep(1)),
-            Ui.Button("Delete", Tone.Danger, null, () => Guard(() => { if (steps.SelectedIndex < 0) return; if (nodes.Count == 1) throw new IOException("Keep at least one block."); int i = steps.SelectedIndex; nodes.RemoveAt(i); steps.SelectedIndex = Math.Min(i, nodes.Count - 1); Changed(); MarkUnsaved(); }))]);
+            deleteBlock = Ui.Button("Delete", Tone.Danger, null, () => Guard(() => { if (steps.SelectedIndex < 0) return; if (nodes.Count == 1) throw new IOException("Keep at least one block."); int i = steps.SelectedIndex; nodes.RemoveAt(i); nodeErrors.Clear(); steps.SelectedIndex = Math.Min(i, nodes.Count - 1); Changed(); MarkUnsaved(); })),
+            checkBlocks = Ui.Button("Check in game", Tone.Secondary, "Parse every command with the connected 26.2 game without placing anything, and mark the invalid ones.", () => Guard(CheckInGame)),
+            Ui.Button("Fix legacy syntax", Tone.Ghost, "Rewrite pre-1.20.5 particle arguments (block, block_marker, falling_dust, item, dust …) to the 26.2 syntax.", FixLegacySyntax)]);
+        listTools.SetFlowBreak(deleteBlock, true);
         steps.ItemHeight = Ui.S(52);
+        steps.SelectedIndexChanged += (_, _) => ShowNodeError();
         steps.DrawItem += (_, e) =>
         {
             if (e.Index < 0 || e.Index >= nodes.Count) return;
             var n = nodes[e.Index]; bool active = (e.State & DrawItemState.Selected) != 0; var g = e.Graphics;
             using (var back = new SolidBrush(active ? Ui.Hover : Ui.Canvas)) g.FillRectangle(back, e.Bounds);
-            if (active) { using var accent = new SolidBrush(Ui.Accent); g.FillRectangle(accent, e.Bounds.X, e.Bounds.Y + Ui.S(6), Ui.S(3), e.Bounds.Height - Ui.S(12)); }
+            bool failed = nodeErrors.TryGetValue(e.Index, out var error);
+            if (active || failed) { using var accent = new SolidBrush(failed ? Ui.Danger : Ui.Accent); g.FillRectangle(accent, e.Bounds.X, e.Bounds.Y + Ui.S(6), Ui.S(3), e.Bounds.Height - Ui.S(12)); }
             var kind = e.Index == 0 ? "minecraft:repeating_command_block" : "minecraft:chain_command_block";
             MinecraftAssets.Draw(g, catalog.Assets.Icon("blocks", kind), new Rectangle(e.Bounds.X + Ui.S(10), e.Bounds.Y + Ui.S(10), Ui.S(30), Ui.S(30)));
             int tx = e.Bounds.X + Ui.S(50);
             TextRenderer.DrawText(g, $"{e.Index + 1:00}  {System.Text.RegularExpressions.Regex.Replace(n.Name, @"^\d+\s*·\s*", "")}", Ui.Strong, new Rectangle(tx, e.Bounds.Y + Ui.S(7), e.Bounds.Width - tx - Ui.S(60), Ui.S(20)), Ui.Text, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-            TextRenderer.DrawText(g, n.Command, Ui.Small, new Rectangle(tx, e.Bounds.Y + Ui.S(27), e.Bounds.Width - tx - Ui.S(8), Ui.S(18)), Ui.Subtle, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+            TextRenderer.DrawText(g, failed ? "✕ " + error : n.Command, Ui.Small, new Rectangle(tx, e.Bounds.Y + Ui.S(27), e.Bounds.Width - tx - Ui.S(8), Ui.S(18)), failed ? Ui.Danger : Ui.Subtle, TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
             if (n.Conditional) TextRenderer.DrawText(g, "COND", Ui.Small, new Rectangle(e.Bounds.Right - Ui.S(52), e.Bounds.Y + Ui.S(7), Ui.S(46), Ui.S(18)), Ui.Warning, TextFormatFlags.Right | TextFormatFlags.NoPrefix);
             using var line = new Pen(Ui.Surface); g.DrawLine(line, e.Bounds.X, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
         };
@@ -181,6 +188,7 @@ internal sealed class LiveStudio : UserControl
     private void EditNode()
     {
         if (selecting || steps.SelectedItem is not ScenarioNode node) return;
+        if (node.Command != command.Text.TrimStart('/')) nodeErrors.Remove(steps.SelectedIndex);
         node.Name = name.Text; node.Command = command.Text.TrimStart('/'); node.Explanation = explanation.Text; node.Conditional = conditional.Checked;
         steps.Invalidate(); Changed(); MarkUnsaved();
     }
@@ -188,10 +196,47 @@ internal sealed class LiveStudio : UserControl
     private void MoveStep(int delta)
     {
         int index = steps.SelectedIndex, next = index + delta; if (index < 0 || next < 0 || next >= nodes.Count) return;
-        var node = nodes[index]; nodes.RemoveAt(index); nodes.Insert(next, node); steps.SelectedIndex = next; Changed(); MarkUnsaved();
+        var node = nodes[index]; nodes.RemoveAt(index); nodes.Insert(next, node); nodeErrors.Clear(); steps.SelectedIndex = next; Changed(); MarkUnsaved();
     }
     private void ReplaceNodes(IEnumerable<ScenarioNode> replacement)
-    { selecting = true; nodes.Clear(); foreach (var node in replacement) nodes.Add(node); selecting = false; steps.SelectedIndex = 0; SelectNode(); }
+    { selecting = true; nodes.Clear(); nodeErrors.Clear(); foreach (var node in replacement) nodes.Add(node); selecting = false; steps.SelectedIndex = 0; SelectNode(); }
+
+    private void ShowNodeError()
+    {
+        if (steps.SelectedIndex >= 0 && nodeErrors.TryGetValue(steps.SelectedIndex, out var error)) { feedback.Text = $"Block {steps.SelectedIndex + 1} does not parse in 26.2:\n{error}"; feedback.ForeColor = Ui.Danger; }
+        else feedback.ForeColor = Ui.Muted;
+    }
+    private void CheckInGame()
+    {
+        var p = Player(); var values = new JsonArray();
+        foreach (var n in nodes) values.Add(new JsonObject { ["command"] = n.Command, ["conditional"] = n.Conditional });
+        Connection().Send(new JsonObject { ["operation"] = "validate", ["playerId"] = p["id"]!.GetValue<string>(), ["x"] = (int)x.Value, ["y"] = (int)y.Value, ["z"] = (int)z.Value, ["nodes"] = values });
+        awaitingValidation = true; liveMessage.Text = $"Checking {nodes.Count} commands with the game's parser…"; liveMessage.ForeColor = Ui.Muted;
+    }
+    private void ReadValidation(JsonArray? results)
+    {
+        nodeErrors.Clear();
+        foreach (var r in results ?? [])
+            if (r?["ok"]?.GetValue<bool>() == false && r["index"]?.GetValue<int>() is int i && i >= 0 && i < nodes.Count) nodeErrors[i] = r["message"]?.GetValue<string>() ?? "Invalid command";
+        steps.Invalidate();
+        if (nodeErrors.Count == 0) { Notify?.Invoke($"All {nodes.Count} commands parse in 26.2. Stage or Run will place them.", Tone.Success); return; }
+        var list = string.Join(", ", nodeErrors.Keys.Order().Take(12).Select(i => i + 1)) + (nodeErrors.Count > 12 ? ", …" : "");
+        Notify?.Invoke($"{nodeErrors.Count} of {nodes.Count} commands do not parse in 26.2 (blocks {list}). They are marked in red; fix them before Stage or Run. Fix legacy syntax handles old particle arguments.", Tone.Warning);
+        steps.SelectedIndex = nodeErrors.Keys.Min(); ShowNodeError();
+    }
+    private void FixLegacySyntax()
+    {
+        var touched = new List<int>();
+        for (int i = 0; i < nodes.Count; i++)
+        {
+            var upgraded = LegacySyntax.Upgrade(nodes[i].Command);
+            if (upgraded == nodes[i].Command) continue;
+            nodes[i].Command = upgraded; nodeErrors.Remove(i); touched.Add(i + 1);
+        }
+        if (touched.Count == 0) { Notify?.Invoke("No pre-1.20.5 particle syntax found.", Tone.Info); return; }
+        SelectNode(); steps.Invalidate(); Changed(); MarkUnsaved();
+        Notify?.Invoke($"Rewrote {touched.Count} command(s) to 26.2 particle syntax (blocks {string.Join(", ", touched)}). Use Check in game to confirm.", Tone.Success);
+    }
 
     // ---------- Import page ----------
     private Control BuildImportPage(out Button execute)
@@ -229,7 +274,9 @@ internal sealed class LiveStudio : UserControl
         var result = Scenario.Import(File.ReadAllText(dialog.FileName)); live.Checked = false; ReplaceNodes(result.Nodes);
         review.Text = result.Notice + "\r\n\r\nINSTALLER COMMANDS (review only; never auto-executed)\r\n\r\n" + string.Join("\r\n\r\n", result.InstallerCommands);
         dirty = false; ProjectPath = null; Unsaved = true; Navigate(StudioPage.Commands); MarkDraft();
-        Notify?.Invoke($"Imported {result.Nodes.Count} command blocks into Commands and {result.InstallerCommands.Count} installer commands into Import review. Nothing was executed.", Tone.Success);
+        int legacy = nodes.Count(n => LegacySyntax.Upgrade(n.Command) != n.Command);
+        Notify?.Invoke($"Imported {result.Nodes.Count} command blocks into Commands and {result.InstallerCommands.Count} installer commands into Import review. Nothing was executed." +
+            (legacy > 0 ? $" {legacy} use pre-1.20.5 particle syntax: click Fix legacy syntax, then Check in game." : " Use Check in game before Stage or Run."), legacy > 0 ? Tone.Warning : Tone.Success);
     }
 
     // ---------- Project files ----------
@@ -359,7 +406,7 @@ internal sealed class LiveStudio : UserControl
     private void UpdateLiveControls(bool ready, bool pending)
     {
         stage.Enabled = run.Enabled = near.Enabled = readBlocks.Enabled = ready && !pending; stop.Enabled = ready;
-        executeSetup.Enabled = ready && !pending; itemDesigner.Online = ready && !pending;
+        executeSetup.Enabled = ready && !pending; itemDesigner.Online = ready && !pending; checkBlocks.Enabled = ready && !pending;
     }
     private void Status(LiveStatus status)
     {
@@ -408,7 +455,18 @@ internal sealed class LiveStudio : UserControl
             {
                 lastAck = ack; string message = state["message"]!.GetValue<string>(); bool accepted = state["accepted"]!.GetValue<bool>();
                 liveMessage.Text = (accepted ? "✓ " : "✕ ") + message; liveMessage.ForeColor = accepted ? Ui.Accent : Ui.Danger;
-                if (!accepted) { live.Checked = false; running = state["armed"]?.GetValue<bool>() ?? false; Notify?.Invoke("The game rejected the request: " + message, Tone.Danger); }
+                if (awaitingValidation) { awaitingValidation = false; if (accepted) ReadValidation(state["validation"] as JsonArray); }
+                if (!accepted)
+                {
+                    live.Checked = false; running = state["armed"]?.GetValue<bool>() ?? false;
+                    var block = System.Text.RegularExpressions.Regex.Match(message, @"\ABlock (\d+): (.*)\z", System.Text.RegularExpressions.RegexOptions.Singleline);
+                    if (block.Success && !UseDesigner && int.TryParse(block.Groups[1].Value, out var number) && number >= 1 && number <= nodes.Count)
+                    {
+                        nodeErrors[number - 1] = block.Groups[2].Value; steps.Invalidate(); steps.SelectedIndex = number - 1; ShowNodeError();
+                        Notify?.Invoke($"Nothing was placed: block {number} does not parse in 26.2 ({block.Groups[2].Value}). Use Check in game to find every invalid block.", Tone.Danger);
+                    }
+                    else Notify?.Invoke("The game rejected the request: " + message, Tone.Danger);
+                }
                 if (awaitingInstall) { expectedCommands = BlockFingerprint(blocks); awaitingInstall = false; }
             }
             if (c.PendingId is null && expectedCommands.Length > 0 && expectedCommands != BlockFingerprint(blocks))

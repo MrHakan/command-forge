@@ -8,6 +8,6 @@
     <Product>Command Forge</Product>
     <AssemblyTitle>Command Forge</AssemblyTitle>
     <Description>Java Edition item, NBT and command-block authoring with an embedded Minecraft window</Description>
-    <Version>0.5.0</Version>
+    <Version>0.5.1</Version>
   </PropertyGroup>
 </Project>

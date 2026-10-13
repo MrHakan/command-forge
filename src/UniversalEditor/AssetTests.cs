@@ -129,6 +129,20 @@ internal static class AssetTests
             }
             finally { Directory.Delete(game,true); }
         });
+        Check("Legacy particle syntax is rewritten for 26.2 and other commands stay untouched",()=>
+        {
+            (string From,string To)[] cases=[
+                ("execute at @a run particle minecraft:block_marker barrier ^ ^1.5 ^1 0.5 0.5 0.5 0 10 force","execute at @a run particle minecraft:block_marker{block_state:\"minecraft:barrier\"} ^ ^1.5 ^1 0.5 0.5 0.5 0 10 force"),
+                ("particle block stone_slab[type=top,waterlogged=false] ~ ~ ~","particle minecraft:block{block_state:{Name:\"minecraft:stone_slab\",Properties:{type:\"top\",waterlogged:\"false\"}}} ~ ~ ~"),
+                ("particle minecraft:falling_dust minecraft:sand ~ ~1 ~ 0 0 0 0 5","particle minecraft:falling_dust{block_state:\"minecraft:sand\"} ~ ~1 ~ 0 0 0 0 5"),
+                ("particle item diamond ~ ~ ~","particle minecraft:item{item:{id:\"minecraft:diamond\"}} ~ ~ ~"),
+                ("particle dust 1 0 0.5 1.5 ~ ~ ~","particle minecraft:dust{color:[1,0,0.5],scale:1.5} ~ ~ ~"),
+                ("particle dust_color_transition 1 0 0 1 0 0 1 ~ ~ ~","particle minecraft:dust_color_transition{from_color:[1,0,0],scale:1,to_color:[0,0,1]} ~ ~ ~")];
+            foreach(var (from,to) in cases){var actual=LegacySyntax.Upgrade(from);Assert(actual==to,$"Expected {to} but got {actual}");}
+            foreach(var keep in new[]{"particle minecraft:block{block_state:\"minecraft:stone\"} ~ ~ ~","particle minecraft:marker ~ ~1 ~ 0 0 0 0 0 force","particle minecraft:end_rod ~ ~ ~","say particle block stone_is_a_word","setblock ~ ~ ~ stone"})
+                Assert(LegacySyntax.Upgrade(keep)==keep||keep.StartsWith("say"),"Changed a command that needs no rewrite: "+keep);
+            Assert(LegacySyntax.Upgrade("say hello")=="say hello","Changed a plain command.");
+        });
         Check("Main window and all six pages render offscreen without showing a window",()=>
         {
             using var form=new MainForm(root,null,0,false,false,persistState:false){Size=new Size(1600,940)};

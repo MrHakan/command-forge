@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "universal_editor_bridge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "name": "Universal Editor Bridge",
   "description": "Local singleplayer authoring bridge. No network listener.",
   "environment": "client",

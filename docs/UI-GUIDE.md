@@ -31,7 +31,7 @@ The header shows the slot artwork and an approximate in-game tooltip (name colou
 
 ## Commands page
 
-Chain list with repeating/chain block artwork, command preview and a COND marker; **+ Block** inserts after the selection. The editor uses a monospace command field. **Game read-back** shows the selected block's position, success count and output after Stage/Run.
+Chain list with repeating/chain block artwork, command preview and a COND marker; **+ Block** inserts after the selection. **Check in game** parses every command with the connected 26.2 game without placing anything and marks each invalid block in red with the parser's message. **Fix legacy syntax** rewrites pre-1.20.5 particle arguments (`block`, `block_marker`, `falling_dust`, `dust_pillar`, `block_crumble`, `item`, `dust`, `dust_color_transition`) to the 26.2 component syntax. Stage and Run validate the whole list first and place nothing if any block fails; the failing block is selected and named. The editor uses a monospace command field. **Game read-back** shows the selected block's position, success count and output after Stage/Run.
 
 ## Import page
 
