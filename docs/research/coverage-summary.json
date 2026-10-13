@@ -1,0 +1,12 @@
+{
+  "researchDate": "2026-10-12",
+  "minecraftDataCommit": "dd01127457231e7da629d645b3c6738068018eb0",
+  "releaseCount": 103,
+  "exactDataPathEntries": 55,
+  "protocolIdMatches": 101,
+  "uniqueProtocolSchemas": 43,
+  "requestedSourceFiles": 303,
+  "downloadedSourceFiles": 303,
+  "failedSourceFiles": 0,
+  "runtimeTestedReleases": 0
+}

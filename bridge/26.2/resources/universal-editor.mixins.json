@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "editor.bridge.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["IntegratedServerMixin", "TestWorldMixin", "BaseCommandBlockMixin"],
+  "injectors": { "defaultRequire": 1 }
+}

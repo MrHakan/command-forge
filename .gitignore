@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+artifacts/
+.vs/
+dist/
+
+# Upstream research inputs that are not redistributed here (see THIRD-PARTY-NOTICES.md)
+docs/research/minecraft-data/
+docs/research/protocol-sample.json
+docs/research/references/*
+!docs/research/references/REVIEW.md
