@@ -31,7 +31,8 @@ $bridge = Join-Path $root 'artifacts\universal-editor-bridge-26.2.jar'
 New-Item -ItemType Directory -Force (Join-Path $out 'artifacts') | Out-Null
 if (Test-Path $bridge) { Copy-Item $bridge (Join-Path $out 'artifacts') }
 else { Write-Warning 'artifacts\universal-editor-bridge-26.2.jar is missing; run ./bridge/build.ps1 first. 26.2 will launch vanilla without live editing.' }
-Copy-Item (Join-Path $root 'docs\UI-GUIDE.md') $out
+Copy-Item (Join-Path $root 'docs\UI-GUIDE.md'), (Join-Path $root 'THIRD-PARTY-NOTICES.md') $out
+if (Test-Path (Join-Path $root 'LICENSE')) { Copy-Item (Join-Path $root 'LICENSE') $out }
 $runtime = if ($FrameworkDependent) { 'Requires the .NET 9 Desktop Runtime (x64).' } else { 'No .NET installation is required.' }
 @"
 Command Forge (Windows x64)
